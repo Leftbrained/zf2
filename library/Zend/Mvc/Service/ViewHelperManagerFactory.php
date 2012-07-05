@@ -23,12 +23,9 @@ namespace Zend\Mvc\Service;
 
 use Zend\Mvc\Exception;
 use Zend\Mvc\Router\RouteMatch;
-use Zend\View\HelperPluginManager as ViewHelperManager;
 use Zend\View\Helper as ViewHelper;
 use Zend\ServiceManager\ConfigurationInterface;
-use Zend\ServiceManager\FactoryInterface;
 use Zend\ServiceManager\ServiceLocatorInterface;
-use Zend\ServiceManager\ServiceManager;
 
 /**
  * @category   Zend
@@ -37,8 +34,10 @@ use Zend\ServiceManager\ServiceManager;
  * @copyright  Copyright (c) 2005-2012 Zend Technologies USA Inc. (http://www.zend.com)
  * @license    http://framework.zend.com/license/new-bsd     New BSD License
  */
-class ViewHelperManagerFactory implements FactoryInterface
+class ViewHelperManagerFactory extends AbstractPluginManagerFactory
 {
+    const PLUGIN_MANAGER_CLASS = 'Zend\View\HelperPluginManager';
+
     /**
      * An array of helper configuration classes to ensure are on the helper_map stack.
      *
@@ -46,6 +45,7 @@ class ViewHelperManagerFactory implements FactoryInterface
      */
     protected $defaultHelperMapClasses = array(
         'Zend\Form\View\HelperConfiguration',
+        'Zend\I18n\View\HelperConfiguration',
         'Zend\Navigation\View\HelperConfiguration'
     );
 
@@ -57,7 +57,7 @@ class ViewHelperManagerFactory implements FactoryInterface
      */
     public function createService(ServiceLocatorInterface $serviceLocator)
     {
-        $plugins = new ViewHelperManager(null, $serviceLocator);
+        $plugins = parent::createService($serviceLocator);
 
         foreach ($this->defaultHelperMapClasses as $configClass) {
             if (is_string($configClass) && class_exists($configClass)) {
@@ -105,7 +105,12 @@ class ViewHelperManagerFactory implements FactoryInterface
             return $basePathHelper;
         });
 
-        // Configure doctype view helper with doctype from configuration, if available
+        /**
+         * Configure doctype view helper with doctype from configuration, if available.
+         *
+         * Other view helpers depend on this to decide which spec to generate their tags
+         * based on. This is why it must be set early instead of later in the layout phtml.
+         */
         $plugins->setFactory('doctype', function($sm) use($serviceLocator) {
             $config = $serviceLocator->get('Configuration');
             $config = $config['view_manager'];
@@ -115,10 +120,6 @@ class ViewHelperManagerFactory implements FactoryInterface
             }
             return $doctypeHelper;
         });
-
-        if ($serviceLocator instanceof ServiceManager) {
-            $plugins->addPeeringServiceManager($serviceLocator);
-        }
 
         return $plugins;
     }

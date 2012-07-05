@@ -22,6 +22,7 @@ namespace Zend\Form;
 
 use IteratorAggregate;
 use Traversable;
+use Zend\Form\Element\Collection;
 use Zend\Form\Exception;
 use Zend\InputFilter\InputFilter;
 use Zend\InputFilter\InputFilterAwareInterface;
@@ -60,7 +61,7 @@ class Form extends Fieldset implements FormInterface
      *
      * @var int
      */
-    protected $bindOnValidate = self::BIND_ON_VALIDATE;
+    protected $bindOnValidate = FormInterface::BIND_ON_VALIDATE;
 
     /**
      * Base fieldset to use for hydrating (if none specified, directly hydrate elements)
@@ -104,6 +105,13 @@ class Form extends Fieldset implements FormInterface
     protected $isValid = false;
 
     /**
+     * Is the form prepared ?
+     *
+     * @var bool
+     */
+    protected $isPrepared = false;
+
+    /**
      * Validation group, if any
      *
      * @var null|array
@@ -120,8 +128,8 @@ class Form extends Fieldset implements FormInterface
      * the element or fieldset, order in which to prioritize it, etc.
      *
      * @param  array|Traversable|ElementInterface $elementOrFieldset
-     * @param  array $flags
-     * @return Form
+     * @param  array                              $flags
+     * @return \Zend\Form\Fieldset|\Zend\Form\FieldsetInterface|\Zend\Form\FormInterface
      */
     public function add($elementOrFieldset, array $flags = array())
     {
@@ -154,12 +162,16 @@ class Form extends Fieldset implements FormInterface
      */
     public function prepare()
     {
-        $this->getInputFilter();
+        if (!$this->isPrepared) {
+            $this->getInputFilter();
 
-        foreach ($this->getIterator() as $elementOrFieldset) {
-            if ($elementOrFieldset instanceof ElementPrepareAwareInterface) {
-                $elementOrFieldset->prepareElement($this);
+            foreach ($this->getIterator() as $elementOrFieldset) {
+                if ($elementOrFieldset instanceof ElementPrepareAwareInterface) {
+                    $elementOrFieldset->prepareElement($this);
+                }
             }
+
+            $this->isPrepared = true;
         }
     }
 
@@ -168,8 +180,9 @@ class Form extends Fieldset implements FormInterface
      *
      * Typically, also passes data on to the composed input filter.
      *
-     * @param  array|\ArrayAccess $data
-     * @return BaseForm
+     * @param  array|\ArrayAccess|\Traversable $data
+     * @return Form|FormInterface
+     * @throws Exception\InvalidArgumentException
      */
     public function setData($data)
     {
@@ -196,21 +209,13 @@ class Form extends Fieldset implements FormInterface
      *
      * Ensures the object is populated with validated values.
      *
-     * @param object $object
-     * @param int $flags
+     * @param  object $object
+     * @param  int $flags
      * @return mixed|void
      * @throws Exception\InvalidArgumentException
      */
     public function bind($object, $flags = FormInterface::VALUES_NORMALIZED)
     {
-        if (!is_object($object)) {
-            throw new Exception\InvalidArgumentException(sprintf(
-                '%s expects an object argument; received "%s"',
-                __METHOD__,
-                $object
-            ));
-        }
-
         if (!in_array($flags, array(FormInterface::VALUES_NORMALIZED, FormInterface::VALUES_RAW))) {
             throw new Exception\InvalidArgumentException(sprintf(
                 '%s expects the $flags argument to be one of "%s" or "%s"; received "%s"',
@@ -226,7 +231,7 @@ class Form extends Fieldset implements FormInterface
         }
 
         $this->bindAs = $flags;
-        $this->object = $object;
+        $this->setObject($object);
         $this->extract();
     }
 
@@ -263,8 +268,8 @@ class Form extends Fieldset implements FormInterface
     /**
      * Set flag indicating whether or not to bind values on successful validation
      *
-     * @param int $bindOnValidateFlag
-     * @return void|BaseForm
+     * @param  int $bindOnValidateFlag
+     * @return void|Form
      * @throws Exception\InvalidArgumentException
      */
     public function setBindOnValidate($bindOnValidateFlag)
@@ -296,8 +301,8 @@ class Form extends Fieldset implements FormInterface
     /**
      * Set the base fieldset to use when hydrating
      *
-     * @param FieldsetInterface $baseFieldset
-     * @return BaseForm
+     * @param  FieldsetInterface $baseFieldset
+     * @return Form
      * @throws Exception\InvalidArgumentException
      */
     public function setBaseFieldset(FieldsetInterface $baseFieldset)
@@ -365,6 +370,7 @@ class Form extends Fieldset implements FormInterface
         $filter->setValidationGroup(InputFilterInterface::VALIDATE_ALL);
 
         if ($this->validationGroup !== null) {
+            $this->prepareValidationGroup($this, $this->data, $this->validationGroup);
             $filter->setValidationGroup($this->validationGroup);
         }
 
@@ -384,11 +390,12 @@ class Form extends Fieldset implements FormInterface
     /**
      * Retrieve the validated data
      *
-     * By default, retrieves normalized values; pass one of the 
+     * By default, retrieves normalized values; pass one of the
      * FormInterface::VALUES_* constants to shape the behavior.
-     * 
-     * @param  int $flag 
+     *
+     * @param  int $flag
      * @return array|object
+     * @throws Exception\DomainException
      */
     public function getData($flag = FormInterface::VALUES_NORMALIZED)
     {
@@ -417,7 +424,8 @@ class Form extends Fieldset implements FormInterface
      *
      * Typically, proxies to the composed input filter
      *
-     * @return BaseForm
+     * @throws Exception\InvalidArgumentException
+     * @return Form|FormInterface
      */
     public function setValidationGroup()
     {
@@ -446,15 +454,48 @@ class Form extends Fieldset implements FormInterface
         if (!is_array($arg)) {
             $arg = (array) $arg;
         }
+
         $this->validationGroup = $arg;
         return $this;
+    }
+
+    /**
+     * Prepare the validation group in case Collection elements were used (this function also handle the case where elements
+     * could have been dynamically added or removed from a collection using JavaScript)
+     *
+     * @param FieldsetInterface $formOrFieldset
+     * @param array             $data
+     * @param array             $validationGroup
+     */
+    protected function prepareValidationGroup(FieldsetInterface $formOrFieldset, array $data, array &$validationGroup)
+    {
+        foreach ($validationGroup as $key => &$value) {
+            if (!$formOrFieldset->has($key)) {
+                continue;
+            }
+
+            $fieldset = $formOrFieldset->byName[$key];
+
+            if ($fieldset instanceof Collection) {
+                $values = array();
+                $count = count($data[$key]);
+
+                for ($i = 0 ; $i != $count ; ++$i) {
+                    $values[] = $value;
+                }
+
+                $value = $values;
+            } else {
+                $this->prepareValidationGroup($fieldset, $data[$key], $validationGroup[$key]);
+            }
+        }
     }
 
     /**
      * Set the input filter used by this form
      * 
      * @param  InputFilterInterface $inputFilter 
-     * @return BaseForm
+     * @return FormInterface
      */
     public function setInputFilter(InputFilterInterface $inputFilter)
     {
@@ -560,7 +601,7 @@ class Form extends Fieldset implements FormInterface
                 continue;
             }
 
-            // Create an inputfilter based on the specification returned from the fieldset
+            // Create an input filter based on the specification returned from the fieldset
             $spec   = $fieldset->getInputFilterSpecification();
             $filter = $inputFactory->createInputFilter($spec);
             $inputFilter->add($filter, $name);
@@ -592,7 +633,7 @@ class Form extends Fieldset implements FormInterface
             return;
         }
 
-        if ($this->baseFieldset) {
+        if (null !== $this->baseFieldset) {
             $this->baseFieldset->populateValues($values);
         } else {
             $this->populateValues($values);
