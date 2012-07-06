@@ -28,13 +28,102 @@
 // PHPUnit doesn't understand relative paths well when they are in the config file.
 chdir(__DIR__);
 
-$phpunit_bin      = 'phpunit';
-$phpunit_conf     = (file_exists('phpunit.xml') ? 'phpunit.xml' : 'phpunit.xml.dist');
-$phpunit_opts     = "-c $phpunit_conf";
+$return = 0;
+$baseCmd = 'phpunit -c ' . (file_exists('phpunit.xml') ? 'phpunit.xml' : 'phpunit.xml.dist');
+
+$components = array();
+$failures = array();
+
+for ($i = 1; $i < $_SERVER['argc']; ++$i) {
+    $arg = $_SERVER['argv'][$i];
+    if ('--' == $arg) {
+        ++$i;
+        break;
+    }
+
+    $arg = str_replace(array('-','_'), ' ', $arg, $count);
+
+    if ($count > 0) {
+        $arg = strtolower($arg);
+        $arg = ucwords($arg);
+        $arg = str_replace(' ', '', $arg);
+    }
+
+    $arg = str_replace(array('\\','/','.'), ' ', $arg, $count);
+    $arg = ucwords($arg);
+    $arg = str_replace(' ', '/', $arg);
+
+    if ('Zend/' != substr($arg, 0, 5)) {
+        $arg = 'Zend/' . $arg;
+    }
+    $components[] = $arg;
+}
+
+for (; $i < $_SERVER['argc']; ++$i) {
+    $baseCmd .= ' ' . $_SERVER['argv'][$i];
+}
+
+//echo $baseCmd . ' ' . implode(' ', $components) . "\n";
+$result = 1;
+if (empty($components)) {
+    foreach (new DirectoryIterator('Zend') as $file) {
+        if ($file->isDot()) {
+            continue;
+        }
+
+        $name = $file->getFilename();
+        if (preg_match('/^((?:[A-Z][a-z0-9]*)+)(?:\\.php)?$/', $name, $matches)) {
+            $components[] = 'Zend/' . $matches[1];
+        }
+    }
+}
+
+foreach ($components as $component) {
+    $name = str_replace('/', '\\', $component);
+    echo $name;
+
+    if (is_dir($component)) {
+        echo '\\*';
+    } elseif (file_exists($component . '.php')) {
+        echo '.php';
+    }
+
+    echo ":\n";
+    $cmd = $baseCmd . ' ' . $component;
+    //passthru($cmd, $result);
+
+    if ($result) {
+        $failures[] = $name;
+    }
+
+    echo "\n";
+}
+echo "\n";
+
+if (empty($failures)) {
+    echo "No failures\n";
+} else {
+    echo 'Failures in: ' . implode(', ', $failures) . "\n";
+}
+
+return count($failures);
+
+
+
+
+
+
 $phpunit_coverage = '';
 
 $run_as     = 'paths';
 $components = array();
+
+$return = 0;
+
+
+
+
+
 
 if ($argc == 1) {
     $components = getAll($phpunit_conf);
@@ -102,13 +191,17 @@ $result = 0;
 if ($run_as == 'groups') {
     $groups = join(',', $components);
     echo "$groups:\n";
-    system("$phpunit_bin $phpunit_opts $phpunit_coverage --group " . $groups, $result);
+    $cmd = "$phpunit_bin $phpunit_opts $phpunit_coverage --group " . $groups;
+    echo "{$cmd}\n";
+    system($cmd, $result);
     echo "\n\n";
 } else {
     foreach ($components as $component) {
         $component =   'Zend/' . basename(str_replace('_', '/', $component));
         echo "$component:\n";
-        system("$phpunit_bin $phpunit_opts $phpunit_coverage " . __DIR__ . '/' . $component, $c_result);
+        $cmd = "$phpunit_bin $phpunit_opts $phpunit_coverage " . __DIR__ . '/' . $component;
+        echo "{$cmd}\n";
+        system($cmd, $c_result);
         echo "\n\n";
         if ($c_result) {
             $result = $c_result;
