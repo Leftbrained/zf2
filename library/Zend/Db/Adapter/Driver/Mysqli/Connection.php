@@ -145,40 +145,74 @@ class Connection implements ConnectionInterface
             return;
         }
 
-        // localize
-        $p = $this->connectionParameters;
+        // Parse connectionParameters into local variables
+        $hostname = $username = $passwd = $dbname = $port = $socket = $charset = null;
 
-        // given a list of key names, test for existence in $p
-        $findParameterValue = function(array $names) use ($p) {
-            foreach ($names as $name) {
-                if (isset($p[$name])) {
-                    return $p[$name];
-                }
+        foreach ($this->connectionParameters as $key => $value) {
+            switch (strtolower($key)) {
+                case 'host':
+                case 'hostname':
+                    $hostname = $value;
+                    break;
+                case 'username':
+                case 'user':
+                    $username = $value;
+                    break;
+                case 'password':
+                case 'passwd':
+                case 'pw':
+                    $passwd = $value;
+                    break;
+                case 'database':
+                case 'dbname':
+                case 'db':
+                case 'schema':
+                    $dbname = $value;
+                    break;
+                case 'port':
+                    $port = (int)$value;
+                    break;
+                case 'socket':
+                    $socket = $value;
+                    break;
+                case 'charset':
+                    $charset = $value;
+                    break;
+                case 'driver':
+                    break;
+                case 'driver_options':
+                default:
+                    throw new Exception\InvalidConnectionParametersException(
+                        'Invalid connection parameter name: ' . $key . ' => ' . $value,
+                        $this->connectionParameters
+                    );
             }
-            return null;
-        };
+        }
 
-        $hostname = $findParameterValue(array('hostname', 'host'));
-        $username = $findParameterValue(array('username', 'user'));
-        $password = $findParameterValue(array('password', 'passwd', 'pw'));
-        $database = $findParameterValue(array('database', 'dbname', 'db', 'schema'));
-        $port     = (isset($p['port'])) ? (int) $p['port'] : null;
-        $socket   = (isset($p['socket'])) ? $p['socket'] : null;
+        $resource = \mysqli_init();
 
-        $this->resource = new \Mysqli($hostname, $username, $password, $database, $port, $socket);
+        // prevent hanging until maximum execution time limit with non-responsive host:port 
+        $resource->options(MYSQLI_OPT_CONNECT_TIMEOUT, 5);
 
-        if ($this->resource->connect_error) {
+        // hide warnings thrown on failed connection attempts
+        @$resource->real_connect($hostname, $username, $passwd, $dbname, $port, $socket);
+
+        if ($resource->connect_error) {
             throw new Exception\RuntimeException(
                 'Connection error',
                 null,
-                new Exception\ErrorException($this->resource->connect_error, $this->resource->connect_errno)
+                new Exception\ErrorException($resource->connect_error, $resource->connect_errno)
             );
         }
 
-        if (!empty($p['charset'])) {
-            $this->resource->set_charset($p['charset']);
+        if (isset($charset) && !$resource->set_charset($charset)) {
+            throw new Exception\InvalidConnectionParametersException(
+                'Unable to set charset: "' . $charset . '"',
+                $this->connectionParameters
+            );
         }
 
+        $this->resource = $resource;
     }
 
     /**
@@ -196,7 +230,7 @@ class Connection implements ConnectionInterface
      */
     public function disconnect()
     {
-        if ($this->resource instanceof \PDO) {
+        if ($this->resource instanceof \Mysqli) {
             $this->resource->close();
         }
         unset($this->resource);
