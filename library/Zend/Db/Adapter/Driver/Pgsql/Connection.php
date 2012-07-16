@@ -124,38 +124,102 @@ class Connection implements ConnectionInterface
             return;
         }
 
-        // localize
-        $p = $this->connectionParameters;
+        $connection = array();
+        $options = array();
 
-        // given a list of key names, test for existence in $p
-        $findParameterValue = function(array $names) use ($p) {
-            foreach ($names as $name) {
-                if (isset($p[$name])) {
-                    return $p[$name];
-                }
+        foreach ($this->connectionParameters as $key => $value) {
+            switch (strtolower($key)) {
+                case 'host':
+                case 'hostname':
+                    $connection['host'] = $value;
+                    break;
+                case 'username':
+                case 'user':
+                    $connection['user'] = $value;
+                    break;
+                case 'password':
+                case 'passwd':
+                case 'pw':
+                    $connection['password'] = $value;
+                    break;
+                case 'database':
+                case 'dbname':
+                case 'db':
+                case 'schema':
+                    $connection['dbname'] = $value;
+                    break;
+                case 'port':
+                    $connection['port'] = (int)$value;
+                    break;
+                case 'charset':
+                    $options['client_encoding'] = $value;
+                    break;
+                case 'driver':
+                    break;
+                case 'driver_options':
+                    if (is_array($value)) {
+                        $options = array_merge($options, $value);
+                    } else {
+                        $options[] = $value; // Pass through, as-is
+                    }
+                    break;
+                case 'socket':
+                default:
+                    throw new Exception\InvalidConnectionParametersException(
+                        'Invalid connection parameter name: ' . $key . ' => ' . $value,
+                        $this->connectionParameters
+                    );
             }
-            return null;
+        }
+
+        $q = function ($value, $symbol) {
+            $value = str_replace($symbol, '\\' . $symbol, $value);
+            $value = str_replace('\\', '\\\\', $value);
+            return $symbol . $value . $symbol;
         };
 
-        $connection             = array();
-        $connection['host']     = $findParameterValue(array('hostname', 'host'));
-        $connection['user']     = $findParameterValue(array('username', 'user'));
-        $connection['password'] = $findParameterValue(array('password', 'passwd', 'pw'));
-        $connection['dbname']   = $findParameterValue(array('database', 'dbname', 'db', 'schema'));
-        $connection['port']     = (isset($p['port'])) ? (int) $p['port'] : null;
-        $connection['socket']   = (isset($p['socket'])) ? $p['socket'] : null;
+        if (!empty($options)) {
+            $connection['options'] = array();
+            foreach ($options as $optionName => $optionValue) {
+                if (is_int($optionName)) {
+                    $connection['options'][] = $optionValue;
+                    continue;
+                }
 
-        $connection = array_filter($connection); // remove nulls
-        $connection = http_build_query($connection, null, ' '); // @link http://php.net/pg_connect
-
-        $this->resource = pg_connect($connection);
-
-        if ($this->resource === false) {
-            throw new Exception\RuntimeException(sprintf(
-                '%s: Unable to connect to database',
-                __METHOD__
-            ));
+                if ('-' == $optionName[0]) {
+                    $option = $optionName;
+                    $sep = ('-' == $optionName[1] ? '=' : ' ');
+                } elseif (1 == strlen($optionName)) {
+                    $sep = ' ';
+                    $option = '-' . $optionName;
+                } else {
+                    $sep = '=';
+                    $option = '--' . $optionName;
+                }
+                if (null !== $optionValue) {
+                    $option .= $sep . $q($optionValue, '"');
+                }
+                $connection['options'][] = $option;
+            }
+            $connection['options'] = implode(' ', $connection['options']);
         }
+
+        $connectionString = array();
+        foreach ($connection as $key => $value) {
+            $connectionString[] = $key . '=' . $q($value, "'");
+        }
+
+        $connectionString = implode(' ', $connectionString);
+
+        // hide warnings thrown on failed connection attempts
+        $resource = @pg_connect($connectionString);
+        
+        if ($resource === false) {
+            // pg_last_error() does not work without a connection :(
+            throw new Exception\RuntimeException('Connection error');
+        }
+
+        $this->resource = $resource;
     }
 
     /**
