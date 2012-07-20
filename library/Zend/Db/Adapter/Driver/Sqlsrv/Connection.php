@@ -141,40 +141,65 @@ class Connection implements ConnectionInterface
         if ($this->resource) {
             return;
         }
-
+        
         $serverName = '.';
-        $params = array(
+        $connectionInfo = array(
             'ReturnDatesAsStrings' => true
         );
+        $port = null;
+
         foreach ($this->connectionParameters as $key => $value) {
             switch (strtolower($key)) {
-                case 'hostname':
+                case 'host':
                 case 'servername':
-                    $serverName = (string) $value;
+                    $serverName = $value;
                     break;
                 case 'username':
-                case 'uid':
-                    $params['UID'] = (string) $value;
+                case 'user':
+                    $connectionInfo['UID'] = $value;
                     break;
                 case 'password':
-                case 'pwd':
-                    $params['PWD'] = (string) $value;
+                case 'passwd':
+                case 'pw':
+                    $connectionInfo['PWD'] = $value;
                     break;
                 case 'database':
                 case 'dbname':
-                    $params['Database'] = (string) $value;
+                case 'db':
+                case 'schema':
+                    $connectionInfo['Database'] = $value;
+                    break;
+                case 'port':
+                    $port = (int)$value;
+                    break;
+                case 'charset':
+                    $connectionInfo['CharacterSet'] = $value;
+                    break;
+                case 'driver':
                     break;
                 case 'driver_options':
                 case 'options':
-                    $params = array_merge($params, (array) $value);
+                    $connectionInfo = array_merge($connectionInfo, $value);
                     break;
-
+                case 'socket':
+                default:
+                    throw new Exception\InvalidConnectionParametersException(
+                        'Invalid connection parameter name: ' . $key . ' => ' . $value,
+                        $this->connectionParameters
+                    );
             }
         }
 
-        $this->resource = sqlsrv_connect($serverName, $params);
+        if (null !== $port) {
+            $serverName .= ', ' . $port;
+        }
+
+        $this->resource = sqlsrv_connect($serverName, $connectionInfo);
 
         if (!$this->resource) {
+            foreach (sqlsrv_errors() as $error) {
+                echo "<pre>SQLSTATE {$error['SQLSTATE']}: {$error['message']} ({$error['code']})</pre>\n";
+            }
             throw new Exception\RuntimeException(
                 'Connect Error',
                 null,
