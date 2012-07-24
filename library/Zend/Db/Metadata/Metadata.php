@@ -11,7 +11,6 @@
 namespace Zend\Db\Metadata;
 
 use Zend\Db\Adapter\Adapter;
-use Zend\Db\Adapter\Driver;
 
 /**
  * @category   Zend
@@ -21,13 +20,6 @@ use Zend\Db\Adapter\Driver;
 class Metadata implements MetadataInterface
 {
     /**
-     * Adapter
-     *
-     * @var Adapter
-     */
-    protected $adapter = null;
-
-    /**
      * @var MetadataInterface
      */
     protected $source = null;
@@ -35,12 +27,19 @@ class Metadata implements MetadataInterface
     /**
      * Constructor
      *
-     * @param Adapter $adapter
+     * @param MetadataInterface|Adapter $source
      */
-    public function __construct(Adapter $adapter)
+    public function __construct($source)
     {
-        $this->adapter = $adapter;
-        $this->source = $this->createSourceFromAdapter($adapter);
+        if ($source instanceof MetadataInterface) {
+            $this->source = $source;
+        } elseif ($source instanceof Adapter)  {
+            $this->source = $this->createSourceFromAdapter($source);
+        } else {
+            throw new Exception\InvalidArgumentException(
+                'The supplied or instantiated source object does not implement Zend\Db\Metadata\MetadataInterface'
+            );
+        }
     }
 
     /**
@@ -65,7 +64,27 @@ class Metadata implements MetadataInterface
         throw new \Exception('cannot create source from adapter');
     }
 
-    // @todo methods
+    /**
+     * Get source object
+     *
+     * @return MetadataInterface
+     */
+    public function getSource()
+    {
+        return $this->source;
+    }
+
+    /**
+     * Set source object
+     *
+     * @param MetadataInterface $source
+     * @return Metadata
+     */
+    public function setSource(MetadataInterface $source)
+    {
+        $this->source = $source;
+        return $this;
+    }
 
     /**
      * Get base tables and views
